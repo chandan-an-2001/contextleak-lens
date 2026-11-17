@@ -30,7 +30,9 @@ Browser tests automatically use system Chrome on Windows when available, otherwi
 
 ## Validation
 
-Validated on November 17, 2026: the production build and strict TypeScript check passed; all 28 unit tests and all four real-browser workflow tests passed. Browser checks cover real OCR for all three demos, a real PNG upload, cancellation and retry, evidence graph selection, custom masks, movement/resizing and history, full-resolution export, opaque output pixels, fresh verification, values-free JSON, session clearing, mobile layout, and appearance settings. The complete workflow also checks for third-party requests and uncaught browser errors.
+Validated on November 17, 2026: the production build and strict TypeScript check passed; all 68 unit tests and all five real-browser workflow tests passed. Browser checks cover real OCR for all three demos and a synthetic WhatsApp-style contact image, real PNG uploads, cancellation and retry, evidence graph selection, custom masks, movement/resizing and history, full-resolution export, opaque output pixels, fresh verification, values-free JSON, session clearing, mobile layout, and appearance settings. The contact workflow checks that both names and both phones are detected, the date is excluded from phone findings, and the exported name area contains solid opaque replacement pixels. The complete workflow also checks for third-party requests and uncaught browser errors.
+
+The latest browser checks served the actual production assets from disk through a test-only Playwright request fixture because this execution environment restricts local TCP ports. Image decoding, OCR workers, detection, redaction, verification, and downloaded-file checks execute in the browser. The hosted publication requires its own deployment verification. Name candidates still require visual review; these synthetic checks do not establish a general precision or recall rate across real-world screenshots.
 
 The production policy permits same-origin assets and local `blob:` image reads. The latter is necessary for Tesseract to read in-memory screenshots; it does not permit remote image uploads or third-party service requests.
 
@@ -40,7 +42,7 @@ The production policy permits same-origin assets and local `blob:` image reads. 
 - Upload with drag/drop, file picker, and paste where supported. PNG, JPEG, and WebP signatures, MIME, size, decoding, dimensions, and pixel counts are validated. Limits: 20 MB, 24 megapixels, and 16,000 pixels on either edge.
 - Pre-analysis image preview, replace, explicit scan/retry/cancel, progress, errors, and a manual editor that remains usable if OCR fails.
 - Real Tesseract.js 7 worker OCR, locally served language and core assets, text/line/word coordinates, OCR confidence, and job cancellation. Newer uploads cannot be overwritten by stale jobs.
-- Detectors for email, contact numbers, UPI candidates, Luhn-valid card candidates, labeled names and birth dates, labeled bank-account candidates, transaction/order references, credential shapes and labels, JWT-shaped tokens, URL secrets, internal hosts, meeting links, labeled locations/schedules/browser titles, social handles, and organization-domain candidates.
+- Detectors for email, contact numbers, UPI candidates, Luhn-valid card candidates, labeled names and birth dates, contact-name candidates near phone numbers or in supported contact-list layouts, labeled bank-account candidates, transaction/order references, credential shapes and labels, JWT-shaped tokens, URL secrets, internal hosts, meeting links, labeled locations/schedules/browser titles, social handles, and organization-domain candidates. Recognizable calendar dates and explicit date/time/identifier fields are excluded from phone-number detection.
 - Findings include severity, source coordinates, explanation, recommendations, method, and OCR confidence. The findings panel never reveals extracted values in full. Manual review is recorded without reducing risk.
 - Five possible exposure relationships: identity/workplace, person/meeting/schedule, credential/account context, payment/identity, and location/identity. Every connection has evidence references, uncertainty wording, and an action. Interactive graph nodes focus corresponding image regions.
 - Explainable 0–100 product-specific exposure scoring with severity and connection contributions, before/after comparison, coverage count, category summaries, and severity filters.
@@ -58,6 +60,8 @@ The production policy permits same-origin assets and local `blob:` image reads. 
 | `src/types.ts` | Typed OCR, geometry, finding, inference, score, mask, image and verification contracts |
 | `src/features/ocr.ts` | Local worker lifecycle, progress, timeout, cancellation, real line/word extraction |
 | `src/features/detection.ts` | Transparent detector rules, masking policy, Luhn check and severity weights |
+| `src/features/contactNames.ts` | Candidate contact names from nearby phone numbers and supported repeated contact layouts |
+| `src/features/phoneNumbers.ts` | Calendar-date exclusion and phone-candidate context checks with preserved text offsets |
 | `src/features/inference.ts` | Evidence-backed connections, scoring and optional future provider contract |
 | `src/features/image.ts` | Validation, image decoding, opaque original-resolution rendering and PNG encoding |
 | `src/features/report.ts` | Values-free report generation and limitation statements |
@@ -93,7 +97,7 @@ No screenshot, OCR text, report, credential, or personal detail is transmitted b
 ## Known limitations and future work
 
 - Automated detection cannot guarantee privacy. Small, blurred, stylized, handwritten, rotated and non-English text can be missed. The UI always asks for manual review.
-- Faces, QR/barcodes, unlabelled names, unlabeled browser tabs/titles, sophisticated address formats, and contextual clues without a supported rule are not recognized automatically. Cover these manually. There is no deskew/orientation preprocessing, automatic face detection, PDF input, cloud model, or LLM inference.
+- Faces, QR/barcodes, unlabeled browser tabs/titles, sophisticated address formats, and contextual clues without a supported rule are not recognized automatically. Unlabeled names are checked near phone numbers or in repeated contact rows with a supported contact-list heading. These are layout-based candidates, including nicknames and organization labels, not verified identities. Other layouts, emoji-heavy names, and OCR errors may be missed; cover these manually. There is no deskew/orientation preprocessing, automatic face detection, PDF input, cloud model, or LLM inference.
 - English OCR assets are bundled. Other languages and optional local model providers are future extensions, not current functionality. The future provider interface is deliberately unused.
 - No offline service worker is installed. Once application/OCR assets are loaded, calculations are local; reopening without network may require a local static server.
 - Original screenshots are visible while reviewing. Extensions, screen recordings, operating-system access, downloaded copies, and device/browser memory management are outside the app's control.

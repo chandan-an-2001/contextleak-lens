@@ -1,10 +1,12 @@
 import type { Category, Finding, OCRLine, OCRResult, Severity } from '../types';
 import { unionBox } from '../lib/geometry';
+import { detectContactNames } from './contactNames';
+import { isPhoneCandidate, phoneScanText } from './phoneNumbers';
 
 export const severityWeights: Record<Severity,number>={critical:25,high:12,medium:6,low:2};
 export const severityOrder: Severity[]=['critical','high','medium','low'];
 export const categories: Category[]=['Identity','Financial','Credentials','Network','Context'];
-type Rule={kind:string;category:Category;severity:Severity;pattern:RegExp;explanation:string;recommendation:string;validate?:(value:string,line:string)=>boolean};
+type Rule={kind:string;category:Category;severity:Severity;pattern:RegExp;explanation:string;recommendation:string;validate?:(value:string,line:string,index:number)=>boolean};
 export function luhn(value:string):boolean {
   const digits=value.replace(/\D/g,''); if(digits.length<13||digits.length>19||/^(\d)\1+$/.test(digits))return false;
   let sum=0,alternate=false;
@@ -13,10 +15,10 @@ export function luhn(value:string):boolean {
 }
 const rules:Rule[]=[
  {kind:'Email address',category:'Identity',severity:'high',pattern:/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,explanation:'A readable email address can reveal an account identity and a way to contact or target its owner.',recommendation:'Cover the complete email address, including the domain.'},
- {kind:'Phone number',category:'Identity',severity:'high',pattern:/(?:\+\d{1,3}[ .-]?)?(?:\(\d{2,4}\)[ .-]?)?\d[\d .-]{5,}\d/g,explanation:'A possible contact number may let someone connect this screenshot with a person or account.',recommendation:'Cover the complete number.',validate:(v,line)=>{const n=v.replace(/\D/g,'');return n.length>=10&&n.length<=15&&!/^(\d)\1+$/.test(n)&&!/(?:account|card|transaction|order|reference|timestamp|upi)/i.test(line)&&(!/^\d{4}[-/]\d{2}/.test(v));}},
+ {kind:'Phone number',category:'Identity',severity:'high',pattern:/(?<![\p{L}\p{N}_])(?:\+\d{1,3}[ .-]?)?(?:\(\d{2,4}\)[ .-]?)?\d[\d .-]{5,}\d(?![\p{L}\p{N}_])/gu,explanation:'A possible contact number may let someone connect this screenshot with a person or account. Recognizable calendar dates and explicit non-phone fields are excluded; the number is not verified.',recommendation:'Cover the complete number.',validate:isPhoneCandidate},
  {kind:'UPI payment identifier',category:'Financial',severity:'high',pattern:/\b[a-z0-9._-]{2,}@[a-z][a-z0-9]{1,}\b/gi,explanation:'A UPI-shaped payment identifier can associate a person with a payment account. This is a candidate, not bank verification.',recommendation:'Hide the payment identifier and related payment instructions.',validate:(v,line)=>!/\.[a-z]{2,}\b/i.test(line.slice(line.indexOf(v)+v.length))&&(/\bupi\b/i.test(line)||/@(?:okaxis|okhdfcbank|okicici|oksbi|ybl|ibl|axl|paytm|apl|upi)$/i.test(v))},
  {kind:'Card number candidate',category:'Financial',severity:'critical',pattern:/\b(?:\d[ -]?){12,18}\d\b/g,explanation:'This number has a card-like length and passes the Luhn checksum. That does not prove it is an active payment card.',recommendation:'Cover the entire number and any related expiry or security code.',validate:v=>luhn(v)},
- {kind:'Labeled name',category:'Identity',severity:'medium',pattern:/(?:\b(?:full name|name|participant|customer|recipient|from|candidate|account holder)\s*:\s*)([A-Z][a-z]+(?:[ -][A-Z][a-z]+){1,3})/gi,explanation:'An explicit label suggests this text is a person’s name. No identity lookup or facial recognition is performed.',recommendation:'Hide the name if the person should not be identified.'},
+ {kind:'Labeled name',category:'Identity',severity:'medium',pattern:/(?:\b(?:full name|name|participant|customer|recipient|from|candidate|account holder)\s*:\s*)([\p{L}][\p{L}\p{M}'’.-]*(?:[ \t]+[\p{L}][\p{L}\p{M}'’.-]*){0,4})/giu,explanation:'An explicit label suggests this text is a personal name. No identity lookup or facial recognition is performed.',recommendation:'Hide the name if the person should not be identified.'},
  {kind:'Date of birth candidate',category:'Identity',severity:'high',pattern:/\b(?:date of birth|dob|born)\s*:\s*[^\n]{4,32}/gi,explanation:'A birth-date label may expose personal information used for identification.',recommendation:'Cover the complete labeled birth date.'},
  {kind:'Potential API key',category:'Credentials',severity:'critical',pattern:/\b(?:sk[_-][a-zA-Z0-9_-]{12,}|AKIA[A-Z0-9]{16}|gh[pousr]_[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{25,})\b/g,explanation:'This value matches a common credential shape. Pattern matching cannot determine whether a credential is active.',recommendation:'Redact the full value. If a real credential has already been shared, revoke and rotate it.'},
  {kind:'Labeled secret',category:'Credentials',severity:'critical',pattern:/\b(?:password|passwd|api[_ -]?key|access[_ -]?token|auth[_ -]?token|secret|session[_ -]?(?:id|token))\s*[:=]\s*["']?([^\s"']{4,})/gi,explanation:'A credential-related label is followed by a visible value. Its validity has not been checked.',recommendation:'Cover both the value and related sensitive context. Rotate real exposed credentials.'},
@@ -42,9 +44,11 @@ export function detect(result:OCRResult):Finding[]{
   for(const [li,line] of result.lines.entries()){
     for(const [ri,rule] of rules.entries()){
       rule.pattern.lastIndex=0;
-      for(const match of line.text.matchAll(rule.pattern)){
-        const source=match[0].trim();if(rule.validate&&!rule.validate(source,line.text))continue;
+      const scanText=rule.kind==='Phone number'?phoneScanText(line.text):line.text;
+      for(const match of scanText.matchAll(rule.pattern)){
+        const source=match[0].trim();
         const index=(match.index??0)+(match[0].length-match[0].trimStart().length);
+        if(rule.validate&&!rule.validate(source,line.text,index))continue;
         findings.push({id:`f-${li}-${ri}-${match.index}`,kind:rule.kind,category:rule.category,severity:rule.severity,confidence:Math.round(line.confidence),box:matchBox(line,index,source.length),sourceText:source,masked:maskValue(source,rule.kind),explanation:rule.explanation,recommendation:rule.recommendation,method:rule.kind==='Card number candidate'?'Pattern + Luhn checksum':'Deterministic pattern + OCR coordinates'});
       }
     }
@@ -54,6 +58,7 @@ export function detect(result:OCRResult):Finding[]{
       findings.push({id:`f-${li}-domain`,kind:'Organization domain candidate',category:'Network',severity:'low',confidence:Math.round(line.confidence),box:matchBox(line,at,domain.length),sourceText:domain,masked:'Domain hidden',explanation:'A non-public-mail domain may connect an account to an organization. That affiliation is only a possibility.',recommendation:'Cover the email domain along with other identifying details.',method:'Email-domain relationship rule'});
     }
   }
+  findings.push(...detectContactNames(result,findings,matchBox));
   // Suppress nested findings only within the same kind; different evidence stays explainable.
   return findings.filter((f,i,a)=>a.findIndex(g=>g.kind===f.kind&&g.sourceText===f.sourceText&&Math.abs(g.box.y-f.box.y)<3)===i).sort((a,b)=>severityOrder.indexOf(a.severity)-severityOrder.indexOf(b.severity));
 }

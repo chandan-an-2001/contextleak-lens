@@ -30,6 +30,76 @@ describe('Meaningful privacy detection',()=>{
  it('detects sensitive query parameters',()=>expect(detect(fixture('https://example.test/join?token=DEMO_NONFUNCTIONAL_VALUE')).some(f=>f.kind==='Sensitive URL parameter')).toBe(true));
  it('keeps harmless content unflagged',()=>expect(detect(fixture('Welcome to the example project.\nThe build completed successfully.'))).toEqual([]));
 });
+describe('Contact names and date-aware phone detection',()=>{
+ it.each([
+  '+91 98765 43210','+1 (202) 555-0146','9876543210','020 7946 0958',
+  '+44 20 7946 0958','+49 30 12345678','+33 1 23 45 67 89','2026111710',
+ ])('keeps a plausible phone format: %s',text=>{
+  const phones=detect(fixture(text)).filter(f=>f.kind==='Phone number');
+  expect(phones.map(f=>f.sourceText)).toEqual([text]);
+ });
+ it.each([
+  'Date: 17-11-2026 10:30','17.11.2026 14.30','11/17/2026 10:30',
+  '2026-11-17T10:30:00Z','17 11 2026 10 30','17 November 2026 1030',
+  'November 17, 2026 1030','Timestamp: 1794934055091','Date: 202611171030',
+  'DOB: 171120261030','Account: 123456789012','Order ID: 123456789012',
+  'IP: 192.168.100.100','Identifier: ABC123456789012','Phone: 0000000000',
+ ])('does not report a date, identifier or address as a phone: %s',text=>{
+  expect(detect(fixture(text)).filter(f=>f.kind==='Phone number')).toEqual([]);
+ });
+ it('keeps a real phone on the same row as a date and maps its original coordinates',()=>{
+  const text='Date: 17-11-2026 10:30 Phone: +91 98765 43210';
+  const phones=detect(fixture(text)).filter(f=>f.kind==='Phone number');
+  expect(phones.map(f=>f.sourceText)).toEqual(['+91 98765 43210']);
+  expect(phones[0].box.x).toBe(10+text.indexOf('+91')*10);
+ });
+ it.each(['Mom','Meera Rao',"José D’Souza",'R. Kumar','MEERA RAO'])('detects a labeled name: %s',name=>{
+  expect(detect(fixture(`Name: ${name}`)).some(f=>f.kind==='Labeled name'&&f.sourceText===`Name: ${name}`)).toBe(true);
+ });
+ it('detects separate contact-name rows above numbers',()=>{
+  const findings=detect(fixture('WhatsApp\nContacts\nAvery Example\n+1 (202) 555-0146\nMeera Rao\n+91 98765 43210'));
+  expect(findings.filter(f=>f.kind==='Contact name candidate').map(f=>f.sourceText)).toEqual(['Avery Example','Meera Rao']);
+  expect(findings.filter(f=>f.kind==='Phone number')).toHaveLength(2);
+ });
+ it('detects a single-word nickname and a lowercase contact label',()=>{
+  const findings=detect(fixture('WhatsApp\nContacts\nMom\n+91 98765 43210\nravi\n+1 (202) 555-0146'));
+  expect(findings.filter(f=>f.kind==='Contact name candidate').map(f=>f.sourceText)).toEqual(['Mom','ravi']);
+ });
+ it.each(['Meera Rao +91 98765 43210','+91 98765 43210 Meera Rao'])('separates a name and phone on one line: %s',text=>{
+  const findings=detect(fixture(text));const name=findings.find(f=>f.kind==='Contact name candidate')!;
+  expect(name.sourceText).toBe('Meera Rao');
+  expect(name.box.x).toBe(10+text.indexOf('Meera')*10);expect(name.box.width).toBe(90);
+  expect(name.masked).not.toContain('Meera');expect(name.explanation).toContain('candidate');
+ });
+ it('detects repeated contact names without phone numbers only in a contact-list layout',()=>{
+  const findings=detect(fixture('WhatsApp\nSelect contact\n3 contacts\nMeera Rao\nMom\nR. Kumar'));
+  expect(findings.filter(f=>f.kind==='Contact name candidate').map(f=>f.sourceText)).toEqual(['Meera Rao','Mom','R. Kumar']);
+  expect(detect(fixture('Project overview\nMeera Rao\nAvery Example')).some(f=>f.kind==='Contact name candidate')).toBe(false);
+ });
+ it('does not turn interface labels, dates or ordinary instructions into names',()=>{
+  const findings=detect(fixture('WhatsApp\nSelect contact\nNew group\nNew contact\nSearch\nToday\nYesterday\nOnline\n17 November 2026\nPlease call tomorrow\n+91 98765 43210'));
+  expect(findings.filter(f=>f.kind==='Contact name candidate')).toEqual([]);
+ });
+ it('does not jump over an intervening label to associate a distant heading',()=>{
+  expect(detect(fixture('Unrelated Heading\nMobile\n+91 98765 43210')).some(f=>f.kind==='Contact name candidate')).toBe(false);
+ });
+ it.each(['Purchase successful','Registration fee'])('does not classify a sentence fragment beside a phone as a name: %s',text=>{
+  expect(detect(fixture(`${text}\n+91 98765 43210`)).some(f=>f.kind==='Contact name candidate')).toBe(false);
+ });
+ it('does not associate a name from a distant row or another column',()=>{
+  const distant=fixture('Avery Example\n+91 98765 43210');distant.lines[0].box.y=-300;
+  expect(detect(distant).some(f=>f.kind==='Contact name candidate')).toBe(false);
+  const column=fixture('Avery Example\n+91 98765 43210');column.lines[0].box.x=900;
+  for(const word of column.lines[0].words)word.box.x+=890;
+  expect(detect(column).some(f=>f.kind==='Contact name candidate')).toBe(false);
+ });
+ it('keeps contact names and numbers out of exported reports',()=>{
+  const findings=detect(fixture('Meera Rao +91 98765 43210'));
+  const json=JSON.stringify(createSafeReport(findings,infer(findings),[],score(findings,infer(findings)),score(findings,infer(findings)),null));
+  expect(json).toContain('Contact name candidate');expect(json).not.toContain('Meera Rao');expect(json).not.toContain('98765');
+ });
+});
+
 describe('Explainable relationships and scoring',()=>{
  it('requires multiple real evidence references',()=>{const findings=sample(),connections=infer(findings);expect(connections.some(i=>i.id==='identity-work')).toBe(true);for(const inference of connections){expect(inference.evidence.length).toBeGreaterThan(1);for(const id of inference.evidence)expect(findings.some(f=>f.id===id)).toBe(true);expect(inference.explanation).toMatch(/may|could|potential/);}expect(infer([])).toEqual([]);});
  it('finds a schedule + meeting + identity connection',()=>expect(infer(detect(fixture('Name: Rowan Sample\nMeeting: https://meet.example.test/demo-room\nDate: 21 Nov 2026, 10:30 UTC'))).some(i=>i.id==='meeting-person')).toBe(true));

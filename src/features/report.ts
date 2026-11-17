@@ -2,7 +2,7 @@ import type {Finding,Inference,Redaction,Score,Verification} from '../types';
 import {covered} from '../lib/geometry';
 export const limitations=[
   'Automated detection can miss private information or flag harmless text. Manually review every part of the image.',
-  'English OCR is approximate; small, rotated, stylized, handwritten, or non-English text may be missed. Faces, barcodes, QR codes, browser tabs without readable labels, and unlabeled names are not recognized.',
+  'English OCR is approximate; small, rotated, stylized, handwritten, or non-English text may be missed. Faces, barcodes, QR codes, and browser tabs without readable labels are not recognized automatically. Unlabeled names are checked only in supported contact layouts and may be missed or misidentified.',
   'Context links are deterministic possibilities, not verified identities, affiliations, attendance, fraud assessments, or probabilities.',
   'The score is a product-specific exposure estimate, not a security certification. Zero does not mean an image is safe.',
 ];
