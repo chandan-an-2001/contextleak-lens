@@ -22,6 +22,12 @@ export function infer(findings:Finding[]):Inference[]{
   add('location-identity','A location linked to an identity',[kinds('Address candidate'),kinds('Labeled name','Email address','Phone number')],
     'A labeled location and personal identifiers could allow someone to associate a person with a place. The address and relationship are unverified.',
     'Hide the full location and identifying details.');
+  for(const name of kinds('Profile name candidate')){
+    const handles=findings.filter(f=>(name.relatedFindingIds||[]).includes(f.id)&&f.kind==='Account handle');
+    if(handles.length) add(`profile-account-${name.id}`,'A display name connected to an account',[[name],handles],
+      'A possible display name appears beside an account label in a supported profile layout. These visible details may connect this screenshot to the account; no identity lookup or face recognition is performed.',
+      'Cover the display name, every account-handle occurrence and related URLs. Review the profile photo separately.');
+  }
   return result;
 }
 export function score(findings:Finding[],inferences:Inference[]):Score{

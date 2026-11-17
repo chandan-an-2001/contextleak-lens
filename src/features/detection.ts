@@ -2,6 +2,7 @@ import type { Category, Finding, OCRLine, OCRResult, Severity } from '../types';
 import { unionBox } from '../lib/geometry';
 import { detectContactNames } from './contactNames';
 import { isPhoneCandidate, phoneScanText } from './phoneNumbers';
+import { detectProfiles } from './profiles';
 
 export const severityWeights: Record<Severity,number>={critical:25,high:12,medium:6,low:2};
 export const severityOrder: Severity[]=['critical','high','medium','low'];
@@ -39,7 +40,7 @@ function matchBox(line:OCRLine,index:number,length:number){
   for(const word of line.words){const start=line.text.indexOf(word.text,cursor); if(start<0)continue; const end=start+word.text.length;if(end>index&&start<index+length)boxes.push(word.box);cursor=end;}
   return boxes.length?unionBox(boxes):line.box;
 }
-export function detect(result:OCRResult):Finding[]{
+export function detect(result:OCRResult,priorFindings:Finding[]=[]):Finding[]{
   const findings:Finding[]=[];
   for(const [li,line] of result.lines.entries()){
     for(const [ri,rule] of rules.entries()){
@@ -58,6 +59,11 @@ export function detect(result:OCRResult):Finding[]{
       findings.push({id:`f-${li}-domain`,kind:'Organization domain candidate',category:'Network',severity:'low',confidence:Math.round(line.confidence),box:matchBox(line,at,domain.length),sourceText:domain,masked:'Domain hidden',explanation:'A non-public-mail domain may connect an account to an organization. That affiliation is only a possibility.',recommendation:'Cover the email domain along with other identifying details.',method:'Email-domain relationship rule'});
     }
   }
+  const profiles=detectProfiles(result,matchBox,priorFindings);
+  // A numeric suffix inside an explicitly identified account URL or handle
+  // must not become a phone/card finding or seed contact-name guessing.
+  for(let i=findings.length-1;i>=0;i--){const f=findings[i];if(['Phone number','Card number candidate'].includes(f.kind)&&profiles.some(p=>['Account URL','Account handle'].includes(p.kind)&&p.box.x<=f.box.x&&p.box.y<=f.box.y&&p.box.x+p.box.width>=f.box.x+f.box.width&&p.box.y+p.box.height>=f.box.y+f.box.height))findings.splice(i,1);}
+  findings.push(...profiles);
   findings.push(...detectContactNames(result,findings,matchBox));
   // Suppress nested findings only within the same kind; different evidence stays explainable.
   return findings.filter((f,i,a)=>a.findIndex(g=>g.kind===f.kind&&g.sourceText===f.sourceText&&Math.abs(g.box.y-f.box.y)<3)===i).sort((a,b)=>severityOrder.indexOf(a.severity)-severityOrder.indexOf(b.severity));

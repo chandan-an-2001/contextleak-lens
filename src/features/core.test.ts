@@ -100,6 +100,67 @@ describe('Contact names and date-aware phone detection',()=>{
  });
 });
 
+const profileText='github.com/avery-an-2001?tab=repositories\navery-an-2001\nOverview Repositories Projects Packages Stars\nAvery A N\navery-an-2001\nEdit profile\n1 follower 0 following\ncontextleak-lens\n2026 GitHub Inc\n17-11-2026 23:35';
+describe('Profile identity detection and independent verification',()=>{
+ it('detects a profile URL, all three handle occurrences, and the adjacent display name',()=>{
+  const findings=detect(fixture(profileText));
+  expect(findings.filter(f=>f.kind==='Account URL')).toHaveLength(1);
+  expect(findings.filter(f=>f.kind==='Account handle')).toHaveLength(3);
+  expect(findings.filter(f=>f.kind==='Profile name candidate').map(f=>f.sourceText)).toEqual(['Avery A N']);
+  expect(findings.filter(f=>f.kind==='Profile name candidate')[0].box.y).toBe(120);
+ });
+ it('does not classify handle years, dates or follower counts as phone numbers or dates of birth',()=>{
+  const findings=detect(fixture(profileText));
+  expect(findings.some(f=>['Phone number','Date of birth candidate','Potential API key','Email address'].includes(f.kind))).toBe(false);
+ });
+ it.each(['https://github.com/avery-an-2001','github.com/avery-an-2001/demo','https://avery-an-2001.github.io/contextleak-lens/'])('recognizes an account-bearing URL: %s',url=>{
+  const findings=detect(fixture(url));expect(findings.some(f=>f.kind==='Account URL')).toBe(true);
+  expect(findings.some(f=>f.kind==='Account handle'&&f.sourceText==='avery-an-2001')).toBe(true);
+ });
+ it.each(['github.com/login','github.com/features','notgithub.com/avery-an-2001','github.com.evil.test/avery-an-2001'])('does not invent an account from a generic or spoofed URL: %s',url=>{
+  expect(detect(fixture(url)).some(f=>['Account URL','Account handle','Profile name candidate'].includes(f.kind))).toBe(false);
+ });
+ it('uses profile geometry when the address bar is unreadable',()=>{
+  const findings=detect(fixture('GitHub\nRepositories\nAvery A N\navery-an-2001\nEdit profile\n1 follower 0 following'));
+  expect(findings.some(f=>f.kind==='Account handle'&&f.sourceText==='avery-an-2001')).toBe(true);
+  expect(findings.some(f=>f.kind==='Profile name candidate'&&f.sourceText==='Avery A N')).toBe(true);
+ });
+ it('keeps numeric account identifiers in their explicit namespace',()=>{
+  for(const account of ['avery-2026111710','1234567890']){
+   const findings=detect(fixture(`github.com/${account}`));
+   expect(findings.some(f=>f.kind==='Account handle'&&f.sourceText===account)).toBe(true);
+   expect(findings.some(f=>f.kind==='Phone number'||f.kind==='Card number candidate')).toBe(false);
+  }
+ });
+ it('does not turn navigation or ordinary proper nouns into profile names',()=>{
+  const findings=detect(fixture('GitHub\nOverview Repositories Projects Packages Stars\nAvery Example\nExample Team'));
+  expect(findings.some(f=>f.kind==='Profile name candidate'||f.kind==='Account handle')).toBe(false);
+ });
+ it('links a display name only to the account evidence that supports it',()=>{
+  const findings=detect(fixture('github.com/rowan-other\n'+profileText));
+  const connection=infer(findings).find(i=>i.id.startsWith('profile-account-'))!;
+  expect(connection).toBeDefined();
+  expect(connection.evidence.map(id=>findings.find(f=>f.id===id)!.sourceText)).toContain('Avery A N');
+  expect(connection.evidence.map(id=>findings.find(f=>f.id===id)!.sourceText)).not.toContain('rowan-other');
+ });
+ it('rechecks an unmasked handle in fresh OCR after the supporting URL is covered',()=>{
+  const original=detect(fixture(profileText));const verification=detect(fixture('avery-an-2001'),original);
+  expect(verification.filter(f=>f.kind==='Account handle')).toHaveLength(1);
+  expect(verification.find(f=>f.kind==='Account handle')!.box.y).toBe(0);
+ });
+ it('rechecks an unmasked display name after every handle and URL is covered',()=>{
+  const original=detect(fixture(profileText));
+  expect(detect(fixture('Avery A N'),original).some(f=>f.kind==='Profile name candidate')).toBe(true);
+  expect(detect(fixture('No identifying text remains.'),original)).toEqual([]);
+ });
+ it('does not export the detected name, account, URL or private linkage fields',()=>{
+  const findings=detect(fixture(profileText));
+  const json=JSON.stringify(createSafeReport(findings,infer(findings),[],score(findings,infer(findings)),score(findings,infer(findings)),null));
+  expect(json).not.toContain('Avery A N');expect(json).not.toContain('avery-an-2001');expect(json).not.toContain('github.com/');
+  expect(json).not.toContain('relatedFindingIds');expect(json).toContain('Profile name candidate');
+ });
+});
+
 describe('Explainable relationships and scoring',()=>{
  it('requires multiple real evidence references',()=>{const findings=sample(),connections=infer(findings);expect(connections.some(i=>i.id==='identity-work')).toBe(true);for(const inference of connections){expect(inference.evidence.length).toBeGreaterThan(1);for(const id of inference.evidence)expect(findings.some(f=>f.id===id)).toBe(true);expect(inference.explanation).toMatch(/may|could|potential/);}expect(infer([])).toEqual([]);});
  it('finds a schedule + meeting + identity connection',()=>expect(infer(detect(fixture('Name: Rowan Sample\nMeeting: https://meet.example.test/demo-room\nDate: 21 Nov 2026, 10:30 UTC'))).some(i=>i.id==='meeting-person')).toBe(true));

@@ -7,7 +7,7 @@ export interface OCRResult { text: string; confidence: number; lines: OCRLine[];
 export interface Finding {
   id: string; kind: string; category: Category; severity: Severity; confidence: number;
   box: Box; sourceText: string; masked: string; explanation: string; recommendation: string;
-  method: string; reviewed?: boolean;
+  method: string; reviewed?: boolean; relatedFindingIds?: string[];
 }
 export interface Inference {
   id: string; title: string; evidence: string[]; explanation: string; recommendation: string;

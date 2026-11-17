@@ -46,7 +46,7 @@ export function detectContactNames(result: OCRResult, existing: Finding[], textB
     const candidate = nameSpan(line, start, end, contactScreen);
     if (!candidate) return;
     const box = textBox(line, candidate.index, candidate.text.length);
-    if ([...existing, ...names].some(finding => ['Labeled name', 'Contact name candidate'].includes(finding.kind) && overlaps(finding.box, box))) return;
+    if ([...existing, ...names].some(finding => ['Labeled name', 'Contact name candidate', 'Profile name candidate'].includes(finding.kind) && overlaps(finding.box, box))) return;
     names.push({
       id: `f-${lineIndex}-contact-name-${candidate.index}`, kind: 'Contact name candidate', category: 'Identity', severity: 'medium',
       confidence: Math.round(line.confidence), box, sourceText: candidate.text, masked: 'Sensitive value hidden',
